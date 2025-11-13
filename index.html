@@ -13,9 +13,11 @@
   .camera-col{width:340px;display:flex;flex-direction:column;gap:10px;align-items:center}
   video{width:100%;aspect-ratio:7/9;background:#000;border-radius:8px;object-fit:cover}
   select,input,button{width:100%;padding:8px;font-size:16px;border-radius:6px}
-  button{cursor:pointer;border:none}
+  button{cursor:pointer;border:none;transition:0.2s}
+  button:hover{opacity:0.85}
   #snap{background:#2563eb;color:#fff}
   #download{background:#16a34a;color:#fff;margin-top:8px;display:none}
+  #flipCam{background:#6b7280;color:#fff}
 
   /* Card (right) */
   .card{
@@ -46,6 +48,14 @@
     font-size:18px;
     font-weight:bold;
   }
+  .card::before {
+    content:'';
+    position:absolute;
+    inset:0;
+    border:4px solid #fff;
+    border-radius:12px;
+    pointer-events:none;
+  }
 </style>
 </head>
 <body>
@@ -56,6 +66,7 @@
   <!-- LEFT -->
   <div class="camera-col">
     <select id="cameraSelect"></select>
+    <button id="flipCam">Flip Camera</button>
     <video id="video" autoplay playsinline muted></video>
     <input id="sid" placeholder="Enter ID">
     <button id="snap">Take Photo</button>
@@ -81,55 +92,79 @@ const snap=document.getElementById('snap');
 const card=document.getElementById('card');
 const dl=document.getElementById('download');
 const cameraSelect=document.getElementById('cameraSelect');
+const flipCam=document.getElementById('flipCam');
 let currentStream;
+let usingFront=true;
 
 // list available cameras
 async function listCameras() {
   const devices = await navigator.mediaDevices.enumerateDevices();
   cameraSelect.innerHTML = '';
+  let count = 1;
   devices.forEach(device => {
     if (device.kind === 'videoinput') {
       const option = document.createElement('option');
       option.value = device.deviceId;
-      option.text = device.label || `Camera ${cameraSelect.length+1}`;
+      const label = device.label.toLowerCase();
+      if (label.includes('front')) option.text = '📱 Front Camera';
+      else if (label.includes('back')) option.text = '📷 Back Camera';
+      else option.text = `Camera ${count++}`;
       cameraSelect.appendChild(option);
     }
   });
+  cameraSelect.style.display = cameraSelect.options.length > 1 ? 'block' : 'none';
 }
 
-// start camera by deviceId
+// start camera by deviceId or facingMode
 async function startCamera(deviceId) {
-  if (currentStream) {
-    currentStream.getTracks().forEach(track => track.stop());
+  if (currentStream) currentStream.getTracks().forEach(track => track.stop());
+
+  const constraints = deviceId
+    ? { video: { deviceId: { exact: deviceId } } }
+    : { video: { facingMode: usingFront ? 'user' : 'environment' } };
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    currentStream = stream;
+    video.srcObject = stream;
+  } catch (err) {
+    console.error('Error accessing camera:', err);
+    alert('Unable to access camera. Please check permissions.');
   }
-  const constraints = {
-    video: { deviceId: deviceId ? { exact: deviceId } : undefined }
-  };
-  const stream = await navigator.mediaDevices.getUserMedia(constraints);
-  currentStream = stream;
-  video.srcObject = stream;
 }
 
 // when dropdown changes
 cameraSelect.onchange = () => startCamera(cameraSelect.value);
+
+// flip between front/back cameras
+flipCam.onclick = async () => {
+  usingFront = !usingFront;
+  await startCamera();
+};
 
 // init on load
 (async()=>{
   await listCameras();
   if (cameraSelect.options.length > 0) {
     await startCamera(cameraSelect.value);
+  } else {
+    await startCamera(); // fallback for mobile (facingMode)
   }
 })();
 
-// update ID
+// update ID label live
 sid.addEventListener('input',()=>label.textContent='ID: '+sid.value);
 
-// take photo (passport size, no stretching)
+// take photo (passport ratio 7:9)
 snap.onclick=()=>{
+  // flash effect
+  document.body.style.transition='background 0.2s';
+  document.body.style.background='#fff';
+  setTimeout(()=>document.body.style.background='#f3f4f6',150);
+
   const vw = video.videoWidth;
   const vh = video.videoHeight;
-  const aspect = 7/9; // passport ratio
-
+  const aspect = 7/9;
   let cropW = vw;
   let cropH = vw / aspect;
   if (cropH > vh) {
@@ -143,7 +178,6 @@ snap.onclick=()=>{
   canvas.width = 350;
   canvas.height = 450;
   const ctx = canvas.getContext('2d');
-
   ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, canvas.width, canvas.height);
 
   shot.src = canvas.toDataURL('image/png');
@@ -151,7 +185,7 @@ snap.onclick=()=>{
   dl.style.display = 'block';
 };
 
-// download card
+// download card as image
 dl.onclick=()=>{
   html2canvas(card,{
     backgroundColor:null,
@@ -159,7 +193,7 @@ dl.onclick=()=>{
     useCORS:true
   }).then(cv=>{
     const a=document.createElement('a');
-    a.download='id-card.png';
+    a.download=(sid.value || 'id-card')+'.png';
     a.href=cv.toDataURL('image/png');
     a.click();
   });
